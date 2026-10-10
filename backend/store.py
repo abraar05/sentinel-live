@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, field
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-TRANSPORTS = ("dvrip", "rtsp", "mjpeg")
+TRANSPORTS = ("dvrip", "rtsp", "dahua")
 
 
 def _data_dir() -> str:

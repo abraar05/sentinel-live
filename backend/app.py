@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .auth import COOKIE_NAME, User, UserStore
 from .dvrip_client import DvripAuthError, DvripError
+from .transports.dahua_rpc2 import DahuaError, DahuaLockout
 from .hub import StreamHub
 from .recorder import MotionDetector, Recorder, list_recordings
 from .store import TRANSPORTS, Device, DeviceStore, _data_dir
@@ -282,6 +283,9 @@ async def list_devices(request: Request):
         entry["health"] = session.health_dict() if session else None
         entry["recording"] = _recorder().is_recording(device.id)
         entry["motion"] = device.id in STATE["motion"].active
+        dev = STATE.get("dahua", {}).get(device.id)
+        if dev:
+            entry["health"] = dev.health_dict()
         out.append(entry)
     me = _resolve_user(request)
     return {
@@ -291,6 +295,17 @@ async def list_devices(request: Request):
         "mayPtz": bool(me and me.can("ptz")),
         "mayRecord": bool(me and me.can("record")),
     }
+
+
+def _dahua(device_id: str):
+    """Lazily build the Dahua session wrapper for a device."""
+    from .dahua_session import DahuaDevice
+    sessions = STATE.setdefault("dahua", {})
+    dev = sessions.get(device_id)
+    if dev is None:
+        dev = DahuaDevice(_store().require(device_id), _store())
+        sessions[device_id] = dev
+    return dev
 
 
 def _device_or_404(device_id: str) -> Device:
@@ -356,6 +371,7 @@ async def delete_device(device_id: str, user: User = Depends(require("manage")))
     session = _hub()._sessions.pop(device_id, None)
     if session:
         session.stop()
+    STATE.get("dahua", {}).pop(device_id, None)
     STATE["motion"].stop(device_id)
     _recorder().stop(device_id)
     if not _store().delete(device_id):
@@ -383,7 +399,16 @@ async def import_devices(payload: dict = Body(...),
 
 @app.post("/api/devices/{device_id}/probe")
 async def probe_device(device_id: str):
-    _device_or_404(device_id)
+    device = _device_or_404(device_id)
+    if device.transport == "dahua":
+        from .dahua_session import DahuaDevice
+        dev = _dahua(device_id)
+        try:
+            return await asyncio.to_thread(dev.probe)
+        except DahuaLockout as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except (DahuaError, OSError) as exc:
+            raise HTTPException(502, str(exc)) from exc
     session = _hub().session(device_id)
     try:
         return await asyncio.to_thread(session.probe)
@@ -395,18 +420,38 @@ async def probe_device(device_id: str):
 
 @app.post("/api/devices/{device_id}/stream")
 async def set_stream(device_id: str, payload: dict = Body(...)):
-    _device_or_404(device_id)
+    device = _device_or_404(device_id)
+    if device.transport == "dahua":
+        dev = _dahua(device_id)
+        if payload.get("on", True):
+            await asyncio.to_thread(dev.start)
+        else:
+            dev.stop()
+        return {"streaming": dev.health["state"] == "live",
+                "mode": "snapshot"}
     session = _hub().session(device_id)
     if payload.get("on", True):
         session.start()
     else:
         session.stop()
-    return {"streaming": session.running}
+    return {"streaming": session.running, "mode": "dvrip"}
 
 
 @app.get("/api/devices/{device_id}/snapshot.jpg")
 async def snapshot(device_id: str, channel: int = Query(0, ge=0, le=63)):
-    _device_or_404(device_id)
+    device = _device_or_404(device_id)
+    if device.transport == "dahua":
+        dev = _dahua(device_id)
+        try:
+            jpeg = await asyncio.to_thread(dev.snapshot, channel)
+        except DahuaLockout as exc:
+            raise HTTPException(429, str(exc)) from exc
+        except (DahuaError, OSError) as exc:
+            raise HTTPException(502, str(exc)) from exc
+        if not jpeg:
+            raise HTTPException(502, "device returned no image")
+        return Response(jpeg, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store"})
     session = _hub().session(device_id)
     try:
         jpeg = await asyncio.to_thread(session.snapshot, channel)
@@ -474,10 +519,15 @@ async def set_motion(device_id: str, payload: dict = Body(...)):
 @app.get("/api/health")
 async def health():
     sessions = _hub().all_sessions()
+    dahua = list(STATE.get("dahua", {}).values())
     return {
         "sessions": [s.health_dict() | {"deviceId": s.device.id,
                                         "deviceName": s.device.name}
-                     for s in sessions],
+                     for s in sessions]
+                    + [d.health_dict() | {"deviceId": d.device.id,
+                                          "deviceName": d.device.name,
+                                          "mode": "snapshot"}
+                       for d in dahua],
         "recordings": _recorder().status(),
         "events": list(_events())[:50],
     }
