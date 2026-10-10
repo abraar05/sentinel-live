@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0f14">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Sentinel Live</title>
+<link rel="manifest" href="/app/manifest.webmanifest">
+<link rel="stylesheet" href="/app/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <span class="brand-name">Sentinel<span>Live</span></span>
+  </div>
+
+  <div class="layouts" role="group" aria-label="Grid layout">
+    <button data-layout="1" class="active" title="Single view">1</button>
+    <button data-layout="2" title="2-up">2</button>
+    <button data-layout="4" title="2x2" class="active">4</button>
+    <button data-layout="6" title="2x3">6</button>
+    <button data-layout="9" title="3x3">9</button>
+    <button data-layout="16" title="4x4">16</button>
+  </div>
+
+  <div class="topbar-actions">
+    <button id="btn-health" class="ghost" title="Connection health">Health</button>
+    <button id="btn-recordings" class="ghost">Clips</button>
+    <button id="btn-import" class="ghost">Import</button>
+    <button id="btn-add" class="primary">+ Device</button>
+  </div>
+</header>
+
+<main class="shell">
+  <section class="stage">
+    <div id="grid" class="grid" data-columns="2"></div>
+    <div id="empty" class="empty">
+      <h2>No streams yet</h2>
+      <p>Add a device, or import your <code>DeviceManager.xml</code> export.</p>
+      <button class="primary" id="empty-import">Import device list</button>
+      <p class="note" id="empty-note"></p>
+    </div>
+  </section>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="side-tabs" role="tablist">
+      <button data-tab="devices" class="active">Devices</button>
+      <button data-tab="events">Events</button>
+      <button data-tab="about">Setup</button>
+    </div>
+
+    <div class="side-body">
+      <div class="tab-panel active" data-panel="devices">
+        <div class="side-actions">
+          <button class="ghost small" id="btn-probe-all">Probe all</button>
+          <button class="ghost small" id="btn-stop-all">Stop all</button>
+        </div>
+        <ul id="device-list" class="device-list"></ul>
+      </div>
+
+      <div class="tab-panel" data-panel="events">
+        <ul id="event-list" class="event-list"></ul>
+      </div>
+
+      <div class="tab-panel" data-panel="about">
+        <div class="prose" id="about-body"></div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<div class="modal-root" id="modal-root" hidden></div>
+<div class="toasts" id="toasts"></div>
+
+<script type="module" src="/app/app.js"></script>
+</body>
+</html>

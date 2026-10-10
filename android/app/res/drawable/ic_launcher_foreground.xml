@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Camera glyph kept inside the 72/108 adaptive safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#34D399"
+        android:pathData="M32,42h10l4,-6h16l4,6h10a6,6 0 0 1 6,6v18a6,6 0 0 1 -6,6H32a6,6 0 0 1 -6,-6V48a6,6 0 0 1 6,-6z" />
+    <path
+        android:fillColor="#0EA5E9"
+        android:pathData="M54,47m-11,0a11,11 0 1,0 22,0a11,11 0 1,0 -22,0" />
+    <path
+        android:fillColor="#080B10"
+        android:pathData="M54,47m-5,0a5,5 0 1,0 10,0a5,5 0 1,0 -10,0" />
+</vector>

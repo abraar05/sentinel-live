@@ -1,0 +1,14 @@
+{
+  "name": "Sentinel Live",
+  "short_name": "Sentinel",
+  "description": "Live DVRIP view, PTZ, snapshots and recording for Xiongmai / XMeye devices",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080b10",
+  "theme_color": "#0b0f14",
+  "icons": [
+    { "src": "/app/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

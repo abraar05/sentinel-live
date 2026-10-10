@@ -1,0 +1,17 @@
+# Runtime state. data/ holds devices.json and device.key - together these are
+# the camera credentials in plaintext-equivalent form. Never commit it.
+data/
+
+# Secrets
+*.jks
+*.keystore
+.env
+
+# Build output
+android/build/
+android/app/assets/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+*.log
