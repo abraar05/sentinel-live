@@ -94,7 +94,8 @@ logs — keep TLS on and don't paste the URL into a public chat.
 
 ## Security checklist
 
-- [ ] `SENTINEL_TOKEN` set, long and random
+- [ ] The bootstrap admin password changed, and `SENTINEL_ADMIN_PASSWORD` unset
+- [ ] A separate account per person, least-privilege role
 - [ ] `SENTINEL_REQUIRE_TOKEN=1` in effect
 - [ ] HTTPS enforced (`force_https`, or terminate TLS at your proxy)
 - [ ] NVR port forward is **34567 only** — never 80, never 37777

@@ -7,7 +7,7 @@ const state = {
   devices: [],
   players: new Map(),      // deviceId -> Player
   layout: Number(localStorage.getItem('sentinel.layout') || 4),
-  tokenRequired: false,
+  user: null,
   healthTimer: null,
 };
 
@@ -28,12 +28,13 @@ function toast(message, kind = '') {
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   if (res.status === 401) {
-    promptToken();
-    throw new Error('unauthorised');
+    showGate('Your session has expired. Please sign in again.');
+    throw new Error('authentication required');
   }
   if (!res.ok) {
     let detail = res.statusText;
@@ -43,32 +44,67 @@ async function api(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-function promptToken() {
-  const value = localStorage.getItem('sentinel.token');
-  if (value) {
-    const url = new URL(location.href);
-    url.searchParams.set('token', value);
-    location.href = url.toString();
-    return;
+// ------------------------------------------------------------------ gate
+
+function showGate(message = '', needsSetup = false) {
+  const gate = $('#gate');
+  const sub = $('#gate-sub');
+  const error = $('#gate-error');
+  gate.hidden = false;
+  sub.textContent = needsSetup
+    ? 'First run — create the admin account for this instance.'
+    : 'Sign in to view your cameras.';
+  error.hidden = !message;
+  error.textContent = message;
+  setTimeout(() => $('#gate-user')?.focus(), 30);
+}
+
+function hideGate() {
+  $('#gate').hidden = true;
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  const button = $('#gate-submit');
+  const error = $('#gate-error');
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    await api('/api/auth/login', {
+      method: 'POST',
+      body: { username: $('#gate-user').value.trim(), password: $('#gate-pass').value },
+    });
+    $('#gate-pass').value = '';
+    hideGate();
+    await refresh();
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = err.message === 'authentication required'
+      ? 'Incorrect username or password.'
+      : err.message;
+    $('#gate-pass').value = '';
+    $('#gate-pass').focus();
+  } finally {
+    button.disabled = false;
   }
-  openModal(`
-    <div class="modal">
-      <h3>Access token</h3>
-      <p class="hint">This server requires a token. Paste the value of SENTINEL_TOKEN.</p>
-      <div class="field"><input id="token-input" type="password" placeholder="token" autocomplete="off"></div>
-      <div class="modal-actions">
-        <button class="ghost" data-close>Cancel</button>
-        <button class="primary" id="token-save">Save</button>
-      </div>
-    </div>`);
-  $('#token-save').onclick = () => {
-    const token = $('#token-input').value.trim();
-    if (!token) return;
-    localStorage.setItem('sentinel.token', token);
-    const url = new URL(location.href);
-    url.searchParams.set('token', token);
-    location.href = url.toString();
-  };
+}
+
+async function checkSession() {
+  try {
+    const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    const body = await res.json();
+    if (body.authenticated) {
+      state.user = body.user;
+      hideGate();
+      return true;
+    }
+    state.user = null;
+    showGate('', body.needsSetup);
+    return false;
+  } catch {
+    showGate('Cannot reach the gateway.');
+    return false;
+  }
 }
 
 function closeModal() {
@@ -159,6 +195,16 @@ function renderDevices() {
   });
 
   renderDeviceList(devices);
+
+  if (!state.mayManage) {
+    $('#btn-add').hidden = true;
+    $('#btn-import').hidden = true;
+    $('#empty-import').hidden = true;
+  }
+  if (!state.mayPtz) $$('.ptz').forEach((pad) => { pad.style.display = 'none'; });
+  if (!state.mayRecord) {
+    $$('[data-act="record"]').forEach((b) => { b.hidden = true; });
+  }
 }
 
 function buildTile(device) {
@@ -583,12 +629,15 @@ async function refresh() {
   try {
     const data = await api('/api/devices');
     state.devices = data.devices;
-    state.tokenRequired = data.tokenRequired;
+    state.user = data.user || state.user;
+    state.mayManage = data.mayManage;
+    state.mayPtz = data.mayPtz;
+    state.mayRecord = data.mayRecord;
     renderDevices();
     localStorage.setItem('sentinel.order', JSON.stringify(activeDevices().map((d) => d.id)));
     renderEvents();
   } catch (err) {
-    if (err.message !== 'unauthorised') toast(err.message, 'bad');
+    if (err.message !== 'authentication required') toast(err.message, 'bad');
   }
 }
 
@@ -693,12 +742,25 @@ function wireChrome() {
     state.healthTimer = null;
   });
 
+  $('#gate-form').addEventListener('submit', submitLogin);
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/app/sw.js').catch(() => { /* offline shell is optional */ });
   }
 }
 
 wireChrome();
-refresh();
-setInterval(refresh, 5000);
-setInterval(renderEvents, 10000);
+
+(async () => {
+  const ok = await checkSession();
+  if (ok) await refresh();
+  setInterval(async () => {
+    if (!document.getElementById('gate').hidden) {
+      // Still signed out - quietly pick up a login in another tab.
+      await checkSession();
+      return;
+    }
+    await refresh();
+  }, 5000);
+  setInterval(renderEvents, 10000);
+})();

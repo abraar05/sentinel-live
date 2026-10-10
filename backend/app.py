@@ -14,11 +14,12 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import (Body, FastAPI, HTTPException, Query, Request, WebSocket,
-                     WebSocketDisconnect)
+from fastapi import (Body, Depends, FastAPI, HTTPException, Query, Request,
+                     WebSocket, WebSocketDisconnect)
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .auth import COOKIE_NAME, User, UserStore
 from .dvrip_client import DvripAuthError, DvripError
 from .hub import StreamHub
 from .recorder import MotionDetector, Recorder, list_recordings
@@ -27,7 +28,12 @@ from .store import TRANSPORTS, Device, DeviceStore, _data_dir
 log = logging.getLogger("api")
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 DATA_DIR = Path(_data_dir())
+# Optional machine-to-machine secret, kept for scripted access and for the
+# bootstrap case. Interactive users now get a real session cookie instead.
 TOKEN = os.environ.get("SENTINEL_TOKEN", "")
+ADMIN_BOOTSTRAP = os.environ.get("SENTINEL_ADMIN_PASSWORD", "")
+
+OPEN_API = {"/api/auth/session", "/api/auth/login"}
 
 STATE: dict = {}
 
@@ -42,6 +48,10 @@ def _hub() -> StreamHub:
 
 def _recorder() -> Recorder:
     return STATE["recorder"]
+
+
+def _users() -> "UserStore":
+    return STATE["users"]
 
 
 def _events() -> deque:
@@ -65,10 +75,15 @@ async def lifespan(app: FastAPI):
     hub = StreamHub(store, asyncio.get_running_loop())
     recorder = Recorder(DATA_DIR / "recordings")
     motion = MotionDetector(push_event)
+    users = UserStore(DATA_DIR)
     STATE.update(store=store, hub=hub, recorder=recorder, motion=motion,
-                 events=deque(maxlen=500))
-    log.info("Sentinel ready: %s device(s), data in %s",
-             len(store.list()), DATA_DIR)
+                 users=users, events=deque(maxlen=500))
+    if ADMIN_BOOTSTRAP:
+        created = users.ensure_bootstrap("admin", ADMIN_BOOTSTRAP)
+        if created:
+            log.info("created bootstrap admin account 'admin'")
+    log.info("Sentinel ready: %s device(s), %s user(s), data in %s",
+             len(store.list()), users.count(), DATA_DIR)
     _check_exposure()
     try:
         yield
@@ -86,26 +101,31 @@ def _check_exposure() -> None:
     sets SENTINEL_REQUIRE_TOKEN=1, which makes that a start-up failure rather
     than something to notice in a log.
     """
-    if os.environ.get("SENTINEL_REQUIRE_TOKEN") == "1" and not TOKEN:
-        raise RuntimeError(
-            "SENTINEL_REQUIRE_TOKEN=1 but SENTINEL_TOKEN is empty. Refusing to "
-            "start: this instance would let anyone on the internet view and "
-            "control your cameras. Set a long random token, e.g. "
-            "`fly secrets set SENTINEL_TOKEN=$(openssl rand -hex 32)`."
-        )
+    if os.environ.get("SENTINEL_REQUIRE_TOKEN") == "1":
+        if not TOKEN and _users().count() == 0:
+            raise RuntimeError(
+                "SENTINEL_REQUIRE_TOKEN=1 but there is no way in: no "
+                "SENTINEL_TOKEN and no user accounts. Set "
+                "SENTINEL_ADMIN_PASSWORD=<long random string> to create the "
+                "first admin on boot, or `fly secrets set "
+                "SENTINEL_TOKEN=$(openssl rand -hex 32)` for API access."
+            )
+        return
     if TOKEN:
-        log.info("token auth enabled - keep the token out of shell history")
+        log.info("SENTINEL_TOKEN set - API accepts it as well as user sessions")
+    if _users().count():
+        log.info("%s user account(s); interactive access requires sign-in",
+                 _users().count())
         return
     bind = os.environ.get("SENTINEL_BIND", "0.0.0.0")
     if bind in ("127.0.0.1", "localhost", "::1"):
         return
     log.warning(
         "=" * 66 + "\n"
-        "  NO TOKEN SET. This server can view and control every configured\n"
-        "  camera. Do NOT expose it to the internet.\n"
-        "    - remote access from your phone: use Tailscale or a VPN, or\n"
-        "    - if you must: run with SENTINEL_TOKEN=<long random string>\n"
-        "      and put it behind TLS. SENTINEL_BIND=127.0.0.1 keeps it local.\n"
+        "  NO USERS AND NO TOKEN. This server can view and control every\n"
+        "  configured camera, with no sign-in.\n"
+        "    set SENTINEL_ADMIN_PASSWORD=<password> to create the first admin\n"
+        "  (or SENTINEL_TOKEN for scripted API access).\n"
         + "=" * 66
     )
 
@@ -113,22 +133,131 @@ def _check_exposure() -> None:
 app = FastAPI(title="Sentinel Live", version="1.0.0", lifespan=lifespan)
 
 
-def _authorised(request: Request) -> bool:
-    if not TOKEN:
-        return True
-    supplied = (request.headers.get("authorization") or "").removeprefix("Bearer ")
-    if not supplied:
-        supplied = request.query_params.get("token", "")
-        if not supplied and request.cookies.get("sentinel_token"):
-            supplied = request.cookies["sentinel_token"]
-    return hmac.compare_digest(supplied, TOKEN)
+def _resolve_user(request: Request) -> User | None:
+    """Session cookie first, then the machine token for scripted access."""
+    cookie = request.cookies.get(COOKIE_NAME)
+    if cookie:
+        user = _users().read(cookie)
+        if user is not None:
+            return user
+    if TOKEN:
+        supplied = (request.headers.get("authorization") or "").removeprefix("Bearer ")
+        if not supplied:
+            supplied = request.query_params.get("token", "")
+        if supplied and hmac.compare_digest(supplied, TOKEN):
+            return User(id="token", username="api-token",
+                        password_hash="", role="admin")
+    return None
 
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    if request.url.path.startswith("/api/") and not _authorised(request):
-        return JSONResponse({"detail": "unauthorised"}, status_code=401)
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+
+    request.state.user = None
+    if request.url.path in OPEN_API:
+        return await call_next(request)
+
+    if _resolve_user(request) is None:
+        return JSONResponse({"detail": "authentication required"},
+                            status_code=401)
     return await call_next(request)
+
+
+def require(action: str):
+    """Dependency that resolves the session user and checks their role."""
+    async def dependency(request: Request) -> User:
+        user = _resolve_user(request)
+        if user is None:
+            raise HTTPException(401, "authentication required")
+        if not user.can(action):
+            raise HTTPException(
+                403, f"role '{user.role}' is not allowed to {action}")
+        return user
+    return dependency
+
+
+# ---------------------------------------------------------------- auth
+
+@app.get("/api/auth/session")
+async def auth_session(request: Request):
+    """Open by design: the UI calls this to decide whether to show login."""
+    user = _resolve_user(request)
+    if user is None:
+        return {"authenticated": False, "needsSetup": _users().count() == 0}
+    return {"authenticated": True, "user": user.public()}
+
+
+@app.post("/api/auth/login")
+async def auth_login(payload: dict = Body(...)):
+    username = (payload.get("username") or "").strip()
+    password = payload.get("password") or ""
+    if not username or not password:
+        raise HTTPException(400, "username and password are required")
+
+    users = _users()
+    if users.count() == 0:
+        # First run: the credentials supplied become the first admin.
+        try:
+            user = users.create(username, password, role="admin")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        log.info("created first admin account '%s'", user.username)
+    else:
+        user = users.authenticate(username, password)
+        if user is None:
+            # Deliberately vague, and no per-account throttling beyond what
+            # PBKDF2's cost already imposes.
+            raise HTTPException(401, "incorrect username or password")
+
+    token = users.issue(user)
+    response = JSONResponse({"user": user.public()})
+    response.set_cookie(
+        COOKIE_NAME, token,
+        httponly=True, samesite="lax",
+        secure=os.environ.get("SENTINEL_COOKIE_SECURE") == "1",
+        max_age=12 * 3600,
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+async def auth_logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return response
+
+
+@app.get("/api/auth/users")
+async def auth_users(user: User = Depends(require("manage"))):
+    return {"users": [u.public() for u in _users().list()]}
+
+
+@app.post("/api/auth/users")
+async def auth_create_user(payload: dict = Body(...),
+                           user: User = Depends(require("manage"))):
+    role = payload.get("role") or "viewer"
+    if role not in ("viewer", "operator", "admin"):
+        raise HTTPException(400, "unknown role")
+    try:
+        created = _users().create(payload.get("username") or "",
+                                  payload.get("password") or "", role=role)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    log.info("user '%s' created %s by '%s'", created.username, role, user.username)
+    return created.public()
+
+
+@app.delete("/api/auth/users/{username}")
+async def auth_delete_user(username: str, user: User = Depends(require("manage"))):
+    if user.username.lower() == username.lower() and user.id != "token":
+        raise HTTPException(400, "you cannot delete your own account")
+    if not _users().delete(username):
+        raise HTTPException(404, "no such user")
+    log.info("user '%s' deleted by '%s'", username, user.username)
+    return {"deleted": username}
 
 
 # --------------------------------------------------------------------- REST
@@ -145,7 +274,7 @@ async def healthz():
 
 
 @app.get("/api/devices")
-async def list_devices():
+async def list_devices(request: Request):
     out = []
     for device in _store().list():
         session = _hub()._sessions.get(device.id)
@@ -154,7 +283,14 @@ async def list_devices():
         entry["recording"] = _recorder().is_recording(device.id)
         entry["motion"] = device.id in STATE["motion"].active
         out.append(entry)
-    return {"devices": out, "tokenRequired": bool(TOKEN)}
+    me = _resolve_user(request)
+    return {
+        "devices": out,
+        "user": me.public() if me else None,
+        "mayManage": bool(me and me.can("manage")),
+        "mayPtz": bool(me and me.can("ptz")),
+        "mayRecord": bool(me and me.can("record")),
+    }
 
 
 def _device_or_404(device_id: str) -> Device:
@@ -165,7 +301,8 @@ def _device_or_404(device_id: str) -> Device:
 
 
 @app.post("/api/devices")
-async def create_device(payload: dict = Body(...)):
+async def create_device(payload: dict = Body(...),
+                      user: User = Depends(require("manage"))):
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name is required")
@@ -190,7 +327,8 @@ async def create_device(payload: dict = Body(...)):
 
 
 @app.patch("/api/devices/{device_id}")
-async def update_device(device_id: str, payload: dict = Body(...)):
+async def update_device(device_id: str, payload: dict = Body(...),
+                      user: User = Depends(require("manage"))):
     device = _device_or_404(device_id)
     store = _store()
     for field in ("name", "host", "transport", "rtspPath", "notes"):
@@ -214,7 +352,7 @@ async def update_device(device_id: str, payload: dict = Body(...)):
 
 
 @app.delete("/api/devices/{device_id}")
-async def delete_device(device_id: str):
+async def delete_device(device_id: str, user: User = Depends(require("manage"))):
     session = _hub()._sessions.pop(device_id, None)
     if session:
         session.stop()
@@ -226,7 +364,8 @@ async def delete_device(device_id: str):
 
 
 @app.post("/api/devices/import")
-async def import_devices(payload: dict = Body(...)):
+async def import_devices(payload: dict = Body(...),
+                        user: User = Depends(require("manage"))):
     xml_text = payload.get("xml") or ""
     if not xml_text.strip():
         raise HTTPException(400, "no XML supplied")
@@ -282,7 +421,8 @@ async def snapshot(device_id: str, channel: int = Query(0, ge=0, le=63)):
 
 
 @app.post("/api/devices/{device_id}/ptz")
-async def ptz(device_id: str, payload: dict = Body(...)):
+async def ptz(device_id: str, payload: dict = Body(...),
+               user: User = Depends(require("ptz"))):
     _device_or_404(device_id)
     command = (payload.get("command") or "").strip()
     if command not in PTZ_COMMANDS:
@@ -310,7 +450,8 @@ PTZ_COMMANDS = {
 
 
 @app.post("/api/devices/{device_id}/record")
-async def set_recording(device_id: str, payload: dict = Body(...)):
+async def set_recording(device_id: str, payload: dict = Body(...),
+                     user: User = Depends(require("record"))):
     _device_or_404(device_id)
     session = _hub().session(device_id)
     if payload.get("on", True):
@@ -361,9 +502,18 @@ async def download(path: str = Query(...)):
 
 @app.websocket("/ws/stream/{device_id}")
 async def stream_socket(websocket: WebSocket, device_id: str):
-    if TOKEN and not hmac.compare_digest(
+    # Authenticate by cookie: same-origin WebSockets carry it automatically,
+    # so the session secret never lands in a URL that proxies will log.
+    user = None
+    cookie = websocket.cookies.get(COOKIE_NAME)
+    if cookie:
+        user = _users().read(cookie)
+    if user is None and TOKEN and hmac.compare_digest(
         websocket.query_params.get("token", ""), TOKEN
     ):
+        user = User(id="token", username="api-token", password_hash="",
+                    role="admin")
+    if user is None or not user.can("view"):
         await websocket.close(code=4401)
         return
     device = _store().get(device_id)

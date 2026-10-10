@@ -77,6 +77,24 @@
 <div class="modal-root" id="modal-root" hidden></div>
 <div class="toasts" id="toasts"></div>
 
+<div class="gate" id="gate" hidden>
+  <form class="gate-card" id="gate-form" autocomplete="on">
+    <div class="gate-mark"></div>
+    <h1 class="gate-title">Sentinel<span>Live</span></h1>
+    <p class="gate-sub" id="gate-sub">Sign in to view your cameras.</p>
+    <label class="gate-field">
+      <span>Username</span>
+      <input id="gate-user" name="username" autocomplete="username" autocapitalize="none" required>
+    </label>
+    <label class="gate-field">
+      <span>Password</span>
+      <input id="gate-pass" name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <p class="gate-error" id="gate-error" hidden></p>
+    <button class="gate-submit" id="gate-submit" type="submit">Sign in</button>
+  </form>
+</div>
+
 <script type="module" src="/app/app.js"></script>
 </body>
 </html>

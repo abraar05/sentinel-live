@@ -4,9 +4,27 @@ Live DVRIP view, PTZ, snapshots, recording and motion detection for
 Xiongmai / XMeye DVRs, NVRs and IP cameras.
 
 ```
-./run.sh                 # http://localhost:8080
-SENTINEL_TOKEN=secret ./run.sh   # require a token (do this if exposed)
+./run.sh                                  # http://localhost:8080
+SENTINEL_ADMIN_PASSWORD='...' ./run.sh    # create the first admin on boot
 ```
+
+## Signing in
+
+The first visit asks you to create an account, which becomes the **admin**.
+After that, add per-person accounts in **Setup → Users**:
+
+| Role | Can |
+|---|---|
+| `viewer` | watch live, snapshots |
+| `operator` | + PTZ, recording, motion detection |
+| `admin` | + add/edit/delete devices, manage users |
+
+Passwords are stored as PBKDF2-HMAC-SHA256 (240k rounds, per-user salt) and
+never leave the server. Sessions are HMAC-signed and carried in an HttpOnly
+cookie, so the secret is not in URLs where proxies log it.
+
+`SENTINEL_TOKEN` still works as a machine credential for scripts
+(`Authorization: Bearer …`) and as the only way in if you never create users.
 
 ---
 
@@ -116,7 +134,10 @@ of wedging the decoder.
 - Passwords are sealed with **AES-256-GCM** (`data/device.key`, mode 0600).
   The key file is the whole secret; back it up with `devices.json`.
 - Passwords are never returned by the API — only `has_password: true`.
-- Set `SENTINEL_TOKEN` if the server is reachable by anything but you.
+- The API is closed until someone signs in or a token is presented; only
+  `/healthz` and the sign-in endpoints are open.
+- Set `SENTINEL_REQUIRE_TOKEN=1` when hosting publicly: the process then
+  refuses to boot unless there is a user or a token.
 - DVRIP itself sends the password as an MD5-derived digest and is not
   end-to-end encrypted. Keep it on a VPN or LAN where possible.
 

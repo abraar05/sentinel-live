@@ -2,11 +2,15 @@
 #
 #   fly launch --no-deploy --copy-config
 #   fly volumes create sentinel_data --size 1     # keeps devices + recordings
-#   fly secrets set SENTINEL_TOKEN=$(openssl rand -hex 32)
+#   fly secrets set SENTINEL_ADMIN_PASSWORD=$(openssl rand -base64 18)
 #   fly deploy
 #
-# SENTINEL_REQUIRE_TOKEN=1 below makes the app refuse to boot without a token,
-# so an exposed instance can never come up unauthenticated by accident.
+# The secret above creates the first "admin" user on first boot; after that you
+# sign in with it and add real per-person accounts in Setup > Users. Set
+# SENTINEL_ADMIN_PASSWORD='' once the account exists.
+#
+# SENTINEL_REQUIRE_TOKEN=1 makes the app refuse to boot unless there is a way
+# in (a user or an API token), so an exposed instance cannot come up open.
 
 app = "sentinel-live"
 primary_region = "lhr"
