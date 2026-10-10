@@ -185,9 +185,17 @@ android/                  native WebView shell (aapt2/javac/d8, no gradle)
 
 ## Deploy
 
-See **[DEPLOY.md](DEPLOY.md)** for running the gateway on a public host: NVR
-port forwarding, Fly.io, first-run import, and a security checklist. It also
-covers CGNAT, which is the most common reason port forwarding fails outright.
+Three routes, depending on what you can reach — see
+**[deploy/REMOTE-ACCESS.md](deploy/REMOTE-ACCESS.md)** for the decision table.
+
+| You can... | Do this |
+|---|---|
+| Run a script on the office desktop | `deploy/windows/install-and-run.ps1` (or the Linux one), then Tailscale |
+| Get into the office router for 5 minutes | Forward TCP 34567, then [DEPLOY.md](DEPLOY.md) |
+| Deploy anywhere public | [DEPLOY.md](DEPLOY.md) — Fly.io, fail-closed auth, security checklist |
+
+The gateway only ever needs to run where it can **see the NVR on the LAN**.
+It does not need the XMeye cloud, and it does not need a public IP.
 
 ---
 
