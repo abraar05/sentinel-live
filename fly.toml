@@ -1,0 +1,52 @@
+# Fly.io deployment for the Sentinel Live gateway.
+#
+#   fly launch --no-deploy --copy-config
+#   fly volumes create sentinel_data --size 1     # keeps devices + recordings
+#   fly secrets set SENTINEL_TOKEN=$(openssl rand -hex 32)
+#   fly deploy
+#
+# SENTINEL_REQUIRE_TOKEN=1 below makes the app refuse to boot without a token,
+# so an exposed instance can never come up unauthenticated by accident.
+
+app = "sentinel-live"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  SENTINEL_BIND = "0.0.0.0"
+  SENTINEL_DATA = "/data"
+  SENTINEL_REQUIRE_TOKEN = "1"
+
+[mounts]
+  source = "sentinel_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # DVRIP previews are long-lived stateful connections. Auto-stop would drop
+  # the control connection to each camera and force a reconnect storm, so keep
+  # one machine warm instead.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

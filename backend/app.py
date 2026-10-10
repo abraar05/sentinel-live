@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
                  events=deque(maxlen=500))
     log.info("Sentinel ready: %s device(s), data in %s",
              len(store.list()), DATA_DIR)
-    _warn_if_exposed()
+    _check_exposure()
     try:
         yield
     finally:
@@ -78,17 +78,25 @@ async def lifespan(app: FastAPI):
         hub.stop_all()
 
 
-def _warn_if_exposed() -> None:
+def _check_exposure() -> None:
     """Refuse to let a CCTV control panel look like a public web app.
 
     Anyone who reaches an unauthenticated instance gets the camera list, the
-    DVRIP credentials behind it, PTZ control and a live feed. Localhost is
-    fine; anything bound wider than the loopback interface is not.
+    DVRIP credentials behind it, PTZ control and a live feed. Public hosting
+    sets SENTINEL_REQUIRE_TOKEN=1, which makes that a start-up failure rather
+    than something to notice in a log.
     """
-    bind = os.environ.get("SENTINEL_BIND", "0.0.0.0")
+    if os.environ.get("SENTINEL_REQUIRE_TOKEN") == "1" and not TOKEN:
+        raise RuntimeError(
+            "SENTINEL_REQUIRE_TOKEN=1 but SENTINEL_TOKEN is empty. Refusing to "
+            "start: this instance would let anyone on the internet view and "
+            "control your cameras. Set a long random token, e.g. "
+            "`fly secrets set SENTINEL_TOKEN=$(openssl rand -hex 32)`."
+        )
     if TOKEN:
         log.info("token auth enabled - keep the token out of shell history")
         return
+    bind = os.environ.get("SENTINEL_BIND", "0.0.0.0")
     if bind in ("127.0.0.1", "localhost", "::1"):
         return
     log.warning(
@@ -124,6 +132,16 @@ async def guard(request: Request, call_next):
 
 
 # --------------------------------------------------------------------- REST
+
+
+@app.get("/healthz")
+async def healthz():
+    """Liveness probe for the hosting platform.
+
+    Deliberately unauthenticated and deliberately says nothing about the
+    devices: a public /healthz must not become a way to enumerate cameras.
+    """
+    return {"status": "ok"}
 
 
 @app.get("/api/devices")

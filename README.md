@@ -162,6 +162,14 @@ android/                  native WebView shell (aapt2/javac/d8, no gradle)
 
 ---
 
+## Deploy
+
+See **[DEPLOY.md](DEPLOY.md)** for running the gateway on a public host: NVR
+port forwarding, Fly.io, first-run import, and a security checklist. It also
+covers CGNAT, which is the most common reason port forwarding fails outright.
+
+---
+
 ## Install
 
 ### As a PWA
