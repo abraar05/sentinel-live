@@ -323,6 +323,9 @@ async def create_device(payload: dict = Body(...),
         raise HTTPException(400, "name is required")
     store = _store()
     password = payload.get("password") or ""
+    storage_path = payload.get("storage_path") or ""
+    if storage_path:
+        storage_path = str(Path(storage_path).resolve())
     device = Device(
         id=uuid.uuid4().hex[:12],
         name=name,
@@ -332,6 +335,7 @@ async def create_device(payload: dict = Body(...),
         password=store.box.seal(password) if password else "",
         transport=payload.get("transport") or "dvrip",
         rtsp_path=payload.get("rtspPath") or "",
+        storage_path=storage_path,
         notes=payload.get("notes") or "",
     )
     if device.transport not in TRANSPORTS:
@@ -357,6 +361,9 @@ async def update_device(device_id: str, payload: dict = Body(...),
         device.password = store.box.seal(payload["password"])
     if "enabled" in payload:
         device.enabled = bool(payload["enabled"])
+    if "storage_path" in payload:
+        storage_path = payload["storage_path"] or ""
+        device.storage_path = str(Path(storage_path).resolve()) if storage_path else ""
     if device.transport not in TRANSPORTS:
         raise HTTPException(400, f"unknown transport {device.transport}")
     store.upsert(device)
@@ -368,7 +375,7 @@ async def update_device(device_id: str, payload: dict = Body(...),
 
 @app.delete("/api/devices/{device_id}")
 async def delete_device(device_id: str, user: User = Depends(require("manage"))):
-    session = _hub()._sessions.pop(device_id, None)
+    session = _hub().session(device_id)
     if session:
         session.stop()
     STATE.get("dahua", {}).pop(device_id, None)
@@ -377,6 +384,47 @@ async def delete_device(device_id: str, user: User = Depends(require("manage")))
     if not _store().delete(device_id):
         raise HTTPException(404, "no such device")
     return {"deleted": device_id}
+
+
+@app.post("/api/storage/base-dir")
+async def set_base_storage_dir(payload: dict = Body(...),
+                              user: User = Depends(require("manage"))):
+    """Set the base directory for all recordings (can be a NAS UNC path)."""
+    global DATA_DIR  # noqa: GLOBAL8041
+    base_dir = payload.get("base_dir") or ""
+    if base_dir:
+        base_dir = str(Path(base_dir).resolve())
+    DATA_DIR = Path(base_dir) if base_dir else Path(_data_dir())
+    # Also update the recorder's default
+    _recorder().media_dir = DATA_DIR / "recordings"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (_recorder().media_dir).mkdir(parents=True, exist_ok=True)
+    return {"base_dir": str(DATA_DIR), "recordings_dir": str(_recorder().media_dir)}
+
+
+@app.post("/api/devices/{device_id}/storage-path")
+async def set_device_storage_path(device_id: str, payload: dict = Body(...),
+                                 user: User = Depends(require("manage"))):
+    """Set the NAS/network storage path for recordings for a specific device."""
+    device = _device_or_404(device_id)
+    store = _store()
+    storage_path = payload.get("storage_path") or ""
+    if storage_path:
+        storage_path = str(Path(storage_path).resolve())
+    device.storage_path = storage_path
+    store.upsert(device)
+    return {"storage_path": device.storage_path, "device_id": device_id}
+
+
+@app.get("/api/storage/status")
+async def get_storage_status():
+    """Get storage status including base dir and recording status."""
+    recorder = _recorder()
+    return {
+        "base_dir": str(DATA_DIR),
+        "recordings_dir": str(recorder.media_dir),
+        "is_recording": _recorder().is_recording  # method reference for client to call
+    }
 
 
 @app.post("/api/devices/import")

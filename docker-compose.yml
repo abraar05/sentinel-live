@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  sentinel:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SENTINEL_BIND=0.0.0.0
+      - SENTINEL_DATA=/data
+      - SENTINEL_ADMIN_PASSWORD=${SENTINEL_ADMIN_PASSWORD:-}
+      - SENTINEL_TOKEN=${SENTINEL_TOKEN:-}
+      - SENTINEL_REQUIRE_TOKEN=${SENTINEL_REQUIRE_TOKEN:-0}
+      - RECORDINGS_BASE_DIR=${RECORDINGS_BASE_DIR:-/data/recordings}
+    volumes:
+      - sentinel-data:/data
+      # Mount your NAS share here, e.g.:
+      # - /mnt/nas/recordings:/data/recordings
+      # Or for Windows UNC paths, use a CIFS mount on the host first
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  sentinel-data:

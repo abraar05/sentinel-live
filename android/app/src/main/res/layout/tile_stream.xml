@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1a1a1a">
+
+    <ImageView
+        android:id="@+id/tile_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:adjustViewBounds="true" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:background="#80000000"
+        android:padding="4dp">
+
+        <TextView
+            android:id="@+id/tile_name"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Camera"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tile_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="idle"
+            android:textColor="#AAAAAA"
+            android:textSize="10sp" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:background="#80000000"
+        android:padding="4dp">
+
+        <Button
+            android:id="@+id/btn_record"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="REC"
+            android:textSize="10sp"
+            android:layout_marginEnd="2dp" />
+
+        <Button
+            android:id="@+id/btn_motion"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="Motion"
+            android:textSize="10sp"
+            android:layout_marginHorizontal="2dp" />
+
+        <Button
+            android:id="@+id/btn_ptz"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:text="PTZ"
+            android:textSize="10sp"
+            android:layout_marginStart="2dp" />
+
+    </LinearLayout>
+
+</FrameLayout>

@@ -476,6 +476,10 @@ function deviceForm(device) {
           <option value="dvrip"${d.transport === 'dvrip' ? ' selected' : ''}>DVRIP (Xiongmai native)</option>
         </select>
       </div>
+      <div class="field"><label>Storage Path (NAS/Network)</label>
+        <input id="f-storage" value="${escapeHtml(d.storage_path || '')}" placeholder="\\\\nas\\share\\recordings or /mnt/nas/recordings">
+        <p class="hint">Leave empty to use default. Supports UNC paths and mounted network drives.</p>
+      </div>
       ${d.cloud_id ? `<div class="warnbox">Imported from a P2P export — cloud id <code>${escapeHtml(d.cloud_id)}</code>. That ID is only dialable through XMeye's proprietary cloud, so set an IP the device can be reached at.</div>` : ''}
       <div class="modal-actions">
         <button class="ghost" data-close>Cancel</button>
@@ -495,6 +499,8 @@ function editDevice(device) {
       };
       const pass = $('#f-pass').value;
       if (pass) body.password = pass;
+      const storagePath = $('#f-storage').value.trim();
+      if (storagePath) body.storage_path = storagePath;
       if (!body.name) return toast('Name is required', 'bad');
       try {
         if (device) await api(`/api/devices/${device.id}`, { method: 'PATCH', body });
@@ -598,6 +604,51 @@ function recordingsModal() {
   }
 }
 
+function storageModal() {
+  openModal(`
+    <div class="modal">
+      <h3>Storage Settings</h3>
+      <p class="hint">Configure where recordings are saved. Supports local paths, NAS UNC paths, and mounted network drives.</p>
+      <div class="field"><label>Base Recordings Directory</label>
+        <input id="s-basedir" value="" placeholder="\\\\nas\\share\\recordings or /mnt/nas/recordings">
+        <p class="hint">Leave empty to use default. All device recordings will be stored under this directory.</p>
+      </div>
+      <div id="storage-status"></div>
+      <div class="modal-actions">
+        <button class="ghost" data-close>Cancel</button>
+        <button class="primary" id="s-save">Save</button>
+      </div>
+    </div>`, loadStorageStatus);
+
+  async function loadStorageStatus() {
+    const statusEl = $('#storage-status');
+    if (!statusEl) return;
+    try {
+      const data = await api('/api/storage/status');
+      statusEl.innerHTML = `
+        <div class="kv"><span>Base Directory</span><span>${escapeHtml(data.base_dir || 'default')}</span></div>
+        <div class="kv"><span>Recordings Dir</span><span>${escapeHtml(data.recordings_dir || 'default')}</span></div>
+      `;
+    } catch (err) {
+      statusEl.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  $('#s-save').onclick = async () => {
+    const baseDir = $('#s-basedir').value.trim();
+    try {
+      const res = await api('/api/storage/base-dir', {
+        method: 'POST',
+        body: { base_dir: baseDir },
+      });
+      toast(`Storage configured: ${res.recordings_dir}`, 'good');
+      closeModal();
+    } catch (err) {
+      toast(err.message, 'bad');
+    }
+  };
+}
+
 function setupModal() {
   openModal(`
     <div class="modal">
@@ -678,6 +729,7 @@ function wireChrome() {
   $('#btn-import').onclick = importModal;
   $('#btn-health').onclick = healthModal;
   $('#btn-recordings').onclick = recordingsModal;
+  $('#btn-storage').onclick = storageModal;
   $('#empty-import').onclick = importModal;
 
   $('#btn-probe-all').onclick = async () => {

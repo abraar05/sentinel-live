@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -19,13 +20,29 @@ MOTION_PIXEL_DELTA = 12      # per-pixel luma change that counts as movement
 MOTION_PIXEL_RATIO = 0.015   # fraction of the frame that must change
 MOTION_COOLDOWN = 30.0       # seconds between events for one device
 
+# Default base recording directory - can be overridden via environment or config
+DEFAULT_RECORDINGS_DIR = os.environ.get(
+    "RECORDINGS_BASE_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "recordings"),
+)
+
 
 class Recorder:
     """Writes the elementary stream to disk in time-based segments."""
 
-    def __init__(self, media_dir: Path):
+    def __init__(self, media_dir: Path | str = DEFAULT_RECORDINGS_DIR):
+        if isinstance(media_dir, str):
+            media_dir = Path(media_dir)
         self.media_dir = media_dir
         self._sessions: dict[str, "_RecorderRun"] = {}
+        self._ensure_dir()
+
+    def _ensure_dir(self) -> None:
+        """Create the base recordings directory if it doesn't exist."""
+        try:
+            self.media_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning("could not create recordings directory %s: %s", self.media_dir, exc)
 
     def is_recording(self, device_id: str) -> bool:
         run = self._sessions.get(device_id)
@@ -45,7 +62,9 @@ class Recorder:
         run = self._sessions.get(session.device.id)
         if run and run.active:
             return run
-        run = _RecorderRun(session, self.media_dir / session.device.id, segment_seconds)
+        # Use device-specific subdirectory if configured, otherwise base dir
+        device_dir = self.media_dir / session.device.id
+        run = _RecorderRun(session, device_dir, segment_seconds)
         self._sessions[session.device.id] = run
         run.start()
         return run
@@ -72,6 +91,7 @@ class _RecorderRun:
         self._stop = threading.Event()
         self._sub = None
         self._thread: threading.Thread | None = None
+        self._ensure_dir()
 
     # ------------------------------------------------------------------ run
 
@@ -145,9 +165,19 @@ class _RecorderRun:
             log.error("recording write failed: %s", exc)
             self._close_segment()
 
+    def _ensure_dir(self) -> None:
+        """Create the output directory if it doesn't exist.
+
+        Works for both local paths and NAS UNC paths (Windows UNC or
+        Linux /mnt/path). For UNC paths, we use os.makedirs which handles them."""
+        try:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning("could not create recording directory %s: %s", self.out_dir, exc)
+
     def _open_segment(self) -> None:
         self._close_segment()
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_dir()
         codec_name = self.session.sets.codec or "h264"
         self._ext = ".h265" if codec_name == "h265" else ".h264"
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -284,12 +314,37 @@ class MotionDetector:
     _delta = _score
 
 
-def list_recordings(media_dir: Path) -> list[dict]:
+def list_recordings(media_dir: Path | str = DEFAULT_RECORDINGS_DIR) -> list[dict]:
     """Enumerate recorded segments newest first."""
+    if isinstance(media_dir, str):
+        media_dir = Path(media_dir)
     items: list[dict] = []
     if not media_dir.exists():
         return items
     for device_dir in sorted(media_dir.iterdir()):
+        if not device_dir.is_dir():
+            continue
+        for file in sorted(device_dir.glob("*")):
+            if file.suffix.lower() not in (".h264", ".h265", ".mp4"):
+                continue
+            stat = file.stat()
+            items.append({
+                "deviceId": device_dir.name,
+                "file": file.name,
+                "path": str(file),
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+            })
+    items.sort(key=lambda item: item["modified"], reverse=True)
+    return items
+
+
+def list_all_recordings() -> list[dict]:
+    """Enumerate all recorded segments across all device directories newest first."""
+    items: list[dict] = []
+    if not DEFAULT_RECORDINGS_DIR.exists():
+        return items
+    for device_dir in sorted(DEFAULT_RECORDINGS_DIR.iterdir()):
         if not device_dir.is_dir():
             continue
         for file in sorted(device_dir.glob("*")):

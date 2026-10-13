@@ -87,7 +87,8 @@ tile says so explicitly rather than spinning forever.
 - **PTZ** — 8-way pan/tilt, zoom and focus, with press-and-hold (Start/Stop).
 - **Snapshots** — full-resolution JPEG straight off the device.
 - **Recording** — segmented to `data/recordings/<device>/`, in time-based
-  files that play in VLC or ffmpeg.
+  files that play in VLC or ffmpeg. Supports **NAS/network storage** via UNC
+  paths or mounted network drives — configure per-device or globally.
 - **Motion detection** — per-device, frame-difference on device JPEG stills.
 - **Health** — live fps, bitrate, resolution, staleness, reconnect counts.
 - **PWA** — installs to the home screen, works full screen on a phone.
@@ -180,6 +181,34 @@ frontend/player.js        WebCodecs tile, snapshot fallback
 frontend/app.js           UI
 android/                  native WebView shell (aapt2/javac/d8, no gradle)
 ```
+
+---
+
+## Storage / NAS Configuration
+
+Sentinel supports saving recordings to NAS or network storage in three ways:
+
+### 1. Global base directory (UI)
+Open **Storage** in the topbar and set a base directory. All device recordings
+will be stored under this path.
+
+### 2. Per-device storage path
+Edit any device and set a **Storage Path**. This overrides the global setting
+for that device only.
+
+### 3. Environment variable
+Set `RECORDINGS_BASE_DIR` before starting the server:
+
+```bash
+RECORDINGS_BASE_DIR=/mnt/nas/recordings ./run.sh
+# or Windows:
+set RECORDINGS_BASE_DIR=\\nas\share\recordings && python -m uvicorn backend.app:app
+```
+
+Supported path formats:
+- Linux: `/mnt/nas/recordings`, `/media/nas`
+- Windows UNC: `\\192.168.1.10\share\recordings`
+- Windows mapped drive: `Z:\recordings`
 
 ---
 

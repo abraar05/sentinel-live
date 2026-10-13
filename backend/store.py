@@ -79,6 +79,7 @@ class Device:
     protocol: str = ""
     connect: str = ""
     rtsp_path: str = ""
+    storage_path: str = ""      # NAS/network path for recordings
     enabled: bool = True
     notes: str = ""
     created_at: float = field(default_factory=time.time)
@@ -87,6 +88,7 @@ class Device:
         data = asdict(self)
         data["password"] = bool(self.password)
         data["has_password"] = bool(self.password)
+        data["storage_path"] = self.storage_path
         return data
 
 
